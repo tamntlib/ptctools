@@ -33,6 +33,16 @@ ptctools volume backup -u $PORTAINER_URL -v vol1,vol2 -o s3://mybucket
 ptctools volume restore -u $PORTAINER_URL -i s3://mybucket/vol1  # volume name derived from URI path
 ptctools volume restore -u $PORTAINER_URL -v vol1 -i s3://mybucket/vol1  # explicit volume name
 
+# Volume copy (raw copy using mc/busybox)
+ptctools volume cp -u $PORTAINER_URL source dest                         # volume to volume
+ptctools volume cp -u $PORTAINER_URL s3://mybucket/path dest              # S3 to volume
+ptctools volume cp -u $PORTAINER_URL source s3://mybucket/path            # volume to S3
+
+# Volume management
+ptctools volume rm -u $PORTAINER_URL myvolume                             # remove volume (with confirmation)
+ptctools volume rm -u $PORTAINER_URL -y myvolume                          # remove without confirmation
+ptctools volume rename -u $PORTAINER_URL old_name new_name                # rename volume (copy + delete)
+
 # Database backup/restore (uses minio/mc for S3)
 ptctools db backup -u $PORTAINER_URL -c container_id -v db_data \
   --db-user postgres --db-name mydb -o backup.sql.gz
@@ -75,6 +85,18 @@ Deploy or update a Docker stack in Portainer.
 
 - **backup**: Backup multiple Docker volumes (comma-separated) to S3 using Duplicati container.
 - **restore**: Restore a single Docker volume from S3. Volume name can be specified via `--volume` or derived from the input URI path.
+
+### `ptctools volume cp`
+Copy data between volumes and S3 (raw file copy).
+- **volume to volume**: Uses `busybox` with `cp -a`
+- **S3 to volume**: Uses `minio/mc` to download files
+- **volume to S3**: Uses `minio/mc` to upload files
+
+### `ptctools volume rm`
+Remove a Docker volume. Use `-y` to skip confirmation, `-f` to force removal.
+
+### `ptctools volume rename`
+Rename a volume by copying data to a new volume and deleting the original.
 
 ### `ptctools db backup/restore`
 Backup/restore PostgreSQL database. Supports both local files and S3 URIs.

@@ -7,7 +7,14 @@ import sys
 
 import click
 
-from ptctools._portainer import run_ephemeral_container
+from ptctools._portainer import (
+    run_ephemeral_container,
+    get_volume_info,
+    create_volume,
+    delete_volume,
+    copy_volume_resource_control,
+    set_volume_ownership,
+)
 from ptctools._s3 import (
     parse_s3_uri,
     get_s3_endpoint,
@@ -254,6 +261,438 @@ def backup(
     click.echo("=== Volume backup complete ===")
     click.echo(f"Successfully backed up {success_count}/{len(volume_list)} volumes")
     sys.exit(0 if success_count == len(volume_list) else 1)
+
+
+def copy_volume(
+    portainer_url: str,
+    api_key: str,
+    endpoint_id: int,
+    source_volume: str,
+    dest_volume: str,
+    ownership: str = "copy",
+    team_id: int | None = None,
+) -> bool:
+    """Copy data from one volume to another.
+    
+    Args:
+        ownership: 'copy' (from source), 'private', 'team', or 'public'
+        team_id: Required if ownership is 'team'
+    """
+    click.echo(f"Copying {source_volume} -> {dest_volume}...")
+
+    # Get source volume info for driver/labels
+    source_info = get_volume_info(portainer_url, api_key, endpoint_id, source_volume)
+    if not source_info:
+        click.echo(f"  ✗ Source volume '{source_volume}' not found")
+        return False
+
+    # Check if dest volume exists, create if not
+    dest_info = get_volume_info(portainer_url, api_key, endpoint_id, dest_volume)
+    if not dest_info:
+        click.echo(f"  Creating destination volume '{dest_volume}'...")
+        driver = source_info.get("Driver", "local")
+        labels = source_info.get("Labels", {})
+        if not create_volume(portainer_url, api_key, endpoint_id, dest_volume, driver, labels):
+            click.echo(f"  ✗ Failed to create destination volume")
+            return False
+
+    # Copy data using busybox
+    copy_cmd = "cp -a /source/. /dest/"
+    copy_config = {
+        "Image": "busybox:latest",
+        "Entrypoint": ["/bin/sh", "-c"],
+        "Cmd": [copy_cmd],
+        "HostConfig": {
+            "Binds": [
+                f"{source_volume}:/source:ro",
+                f"{dest_volume}:/dest",
+            ],
+            "AutoRemove": False,
+        },
+    }
+
+    exit_code, logs = run_ephemeral_container(
+        portainer_url, api_key, endpoint_id, copy_config
+    )
+
+    if exit_code != 0:
+        click.echo(f"  ✗ Copy failed with exit code {exit_code}")
+        if logs:
+            click.echo(f"  Logs: {logs}")
+        return False
+
+    click.echo(f"  ✓ Data copied: {source_volume} -> {dest_volume}")
+
+    # Handle permissions based on ownership setting
+    if ownership == "copy":
+        # Copy permissions from source
+        success, action = copy_volume_resource_control(portainer_url, api_key, source_volume, dest_volume)
+        if action == "copied":
+            click.echo(f"  ✓ Permissions copied from source")
+        elif action == "skipped":
+            click.echo(f"  ✓ Permissions preserved (destination already has permissions)")
+        else:
+            click.echo(f"  ⚠ Warning: Failed to copy permissions - {action}")
+    else:
+        # Set explicit ownership
+        success, msg = set_volume_ownership(portainer_url, api_key, dest_volume, ownership, team_id)
+        if success:
+            click.echo(f"  ✓ Permissions {msg}")
+        else:
+            click.echo(f"  ⚠ Warning: Failed to set permissions - {msg}")
+
+    return True
+
+
+def copy_s3_to_volume(
+    portainer_url: str,
+    api_key: str,
+    endpoint_id: int,
+    volume_name: str,
+    s3_endpoint: str,
+    s3_bucket: str,
+    s3_path: str,
+    s3_access_key: str,
+    s3_secret_key: str,
+) -> bool:
+    """Copy files from S3 to a volume using mc (MinIO Client)."""
+    click.echo(f"Copying s3://{s3_bucket}/{s3_path} -> {volume_name}...")
+
+    # Create destination volume if it doesn't exist
+    dest_info = get_volume_info(portainer_url, api_key, endpoint_id, volume_name)
+    if not dest_info:
+        click.echo(f"  Creating destination volume '{volume_name}'...")
+        if not create_volume(portainer_url, api_key, endpoint_id, volume_name):
+            click.echo(f"  ✗ Failed to create destination volume")
+            return False
+
+    # Build mc commands: configure alias and copy
+    s3_source = f"s3/{s3_bucket}/{s3_path}" if s3_path else f"s3/{s3_bucket}"
+    mc_cmd = " && ".join([
+        f"mc alias set s3 {s3_endpoint} {s3_access_key} {s3_secret_key}",
+        f"mc cp --recursive {s3_source}/ /data/",
+    ])
+
+    copy_config = {
+        "Image": "minio/mc:latest",
+        "Entrypoint": ["/bin/sh", "-c"],
+        "Cmd": [mc_cmd],
+        "HostConfig": {
+            "Binds": [f"{volume_name}:/data"],
+            "AutoRemove": False,
+        },
+    }
+
+    exit_code, logs = run_ephemeral_container(
+        portainer_url, api_key, endpoint_id, copy_config
+    )
+
+    if exit_code != 0:
+        click.echo(f"  ✗ Copy failed with exit code {exit_code}")
+        if logs:
+            click.echo(f"  Logs: {logs}")
+        return False
+
+    click.echo(f"  ✓ Copy completed: s3://{s3_bucket}/{s3_path} -> {volume_name}")
+    return True
+
+
+def copy_volume_to_s3(
+    portainer_url: str,
+    api_key: str,
+    endpoint_id: int,
+    volume_name: str,
+    s3_endpoint: str,
+    s3_bucket: str,
+    s3_path: str,
+    s3_access_key: str,
+    s3_secret_key: str,
+) -> bool:
+    """Copy files from a volume to S3 using mc (MinIO Client)."""
+    click.echo(f"Copying {volume_name} -> s3://{s3_bucket}/{s3_path}...")
+
+    # Build mc commands: configure alias and copy
+    s3_dest = f"s3/{s3_bucket}/{s3_path}" if s3_path else f"s3/{s3_bucket}"
+    mc_cmd = " && ".join([
+        f"mc alias set s3 {s3_endpoint} {s3_access_key} {s3_secret_key}",
+        f"mc cp --recursive /data/ {s3_dest}/",
+    ])
+
+    copy_config = {
+        "Image": "minio/mc:latest",
+        "Entrypoint": ["/bin/sh", "-c"],
+        "Cmd": [mc_cmd],
+        "HostConfig": {
+            "Binds": [f"{volume_name}:/data:ro"],
+            "AutoRemove": False,
+        },
+    }
+
+    exit_code, logs = run_ephemeral_container(
+        portainer_url, api_key, endpoint_id, copy_config
+    )
+
+    if exit_code != 0:
+        click.echo(f"  ✗ Copy failed with exit code {exit_code}")
+        if logs:
+            click.echo(f"  Logs: {logs}")
+        return False
+
+    click.echo(f"  ✓ Copy completed: {volume_name} -> s3://{s3_bucket}/{s3_path}")
+    return True
+
+
+@cli.command()
+@click.option("--url", "-u", required=True, help="Portainer base URL")
+@click.argument("source")
+@click.argument("dest")
+@click.option("--endpoint-id", "-e", type=int, default=1, help="Portainer endpoint ID")
+@click.option("--s3-endpoint", help="S3/MinIO endpoint URL (or S3_ENDPOINT env var)")
+@click.option(
+    "--ownership",
+    type=click.Choice(["private", "team", "public", "copy"]),
+    default="copy",
+    help="Access control: copy from source (default), private, team, or public",
+)
+@click.option("--team-id", "-t", type=int, help="Team ID for team ownership")
+def cp(
+    url: str,
+    source: str,
+    dest: str,
+    endpoint_id: int,
+    s3_endpoint: str | None,
+    ownership: str,
+    team_id: int | None,
+):
+    """Copy data between volumes and S3 (raw copy).
+
+    SOURCE and DEST can be volume names or S3 URIs.
+
+    Examples:
+        ptctools volume cp source dest
+        ptctools volume cp source dest --ownership team
+        ptctools volume cp source dest --ownership private
+        ptctools volume cp s3://bucket/path volume_a
+        ptctools volume cp volume_a s3://bucket/path
+    """
+    from ptctools._s3 import is_s3_uri, parse_s3_uri, get_s3_endpoint, get_s3_credentials
+
+    access_token = os.environ.get("PORTAINER_ACCESS_TOKEN")
+    if not access_token:
+        click.echo("Error: Missing PORTAINER_ACCESS_TOKEN", err=True)
+        sys.exit(1)
+
+    portainer_url = url.rstrip("/")
+    source_is_s3 = is_s3_uri(source)
+    dest_is_s3 = is_s3_uri(dest)
+
+    # Both are S3 - not supported
+    if source_is_s3 and dest_is_s3:
+        click.echo("Error: Cannot copy directly between S3 locations. Use volume as intermediate.", err=True)
+        sys.exit(1)
+
+    # Volume to Volume copy
+    if not source_is_s3 and not dest_is_s3:
+        click.echo(f"Portainer URL: {portainer_url}")
+        click.echo(f"Source Volume: {source}")
+        click.echo(f"Destination Volume: {dest}")
+        click.echo()
+        click.echo("=== Copying volume data ===")
+
+        success = copy_volume(
+            portainer_url,
+            access_token,
+            endpoint_id,
+            source,
+            dest,
+            ownership,
+            team_id,
+        )
+
+        click.echo()
+        click.echo("=== Volume copy complete ===")
+        sys.exit(0 if success else 1)
+
+    # Get S3 credentials
+    try:
+        s3_access_key, s3_secret_key = get_s3_credentials()
+    except click.ClickException as e:
+        click.echo(f"Error: {e.message}", err=True)
+        sys.exit(1)
+
+    # S3 to Volume (download)
+    if source_is_s3:
+        try:
+            uri_endpoint, s3_bucket, s3_path = parse_s3_uri(source)
+            endpoint = get_s3_endpoint(uri_endpoint, s3_endpoint)
+        except click.ClickException as e:
+            click.echo(f"Error: {e.message}", err=True)
+            sys.exit(1)
+
+        volume_name = dest
+
+        click.echo(f"Portainer URL: {portainer_url}")
+        click.echo(f"S3 Endpoint: {endpoint}")
+        click.echo(f"S3 Source: s3://{s3_bucket}/{s3_path}")
+        click.echo(f"Destination Volume: {volume_name}")
+        click.echo()
+        click.echo("=== Copying from S3 to volume ===")
+
+        success = copy_s3_to_volume(
+            portainer_url,
+            access_token,
+            endpoint_id,
+            volume_name,
+            endpoint,
+            s3_bucket,
+            s3_path,
+            s3_access_key,
+            s3_secret_key,
+        )
+
+        click.echo()
+        click.echo("=== Copy from S3 complete ===")
+        sys.exit(0 if success else 1)
+
+    # Volume to S3 (upload)
+    if dest_is_s3:
+        try:
+            uri_endpoint, s3_bucket, s3_path = parse_s3_uri(dest)
+            endpoint = get_s3_endpoint(uri_endpoint, s3_endpoint)
+        except click.ClickException as e:
+            click.echo(f"Error: {e.message}", err=True)
+            sys.exit(1)
+
+        volume_name = source
+        # Use s3_path if provided, otherwise use volume name
+        upload_path = s3_path if s3_path else volume_name
+
+        click.echo(f"Portainer URL: {portainer_url}")
+        click.echo(f"Source Volume: {volume_name}")
+        click.echo(f"S3 Endpoint: {endpoint}")
+        click.echo(f"S3 Destination: s3://{s3_bucket}/{upload_path}")
+        click.echo()
+        click.echo("=== Copying volume to S3 ===")
+
+        success = copy_volume_to_s3(
+            portainer_url,
+            access_token,
+            endpoint_id,
+            volume_name,
+            endpoint,
+            s3_bucket,
+            upload_path,
+            s3_access_key,
+            s3_secret_key,
+        )
+
+        click.echo()
+        click.echo("=== Copy to S3 complete ===")
+        sys.exit(0 if success else 1)
+
+
+@cli.command()
+@click.option("--url", "-u", required=True, help="Portainer base URL")
+@click.argument("volume")
+@click.option("--endpoint-id", "-e", type=int, default=1, help="Portainer endpoint ID")
+@click.option("--force", "-f", is_flag=True, help="Force removal even if in use")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt")
+def rm(
+    url: str,
+    volume: str,
+    endpoint_id: int,
+    force: bool,
+    yes: bool,
+):
+    """Remove a Docker volume.
+
+    VOLUME is the volume name to remove.
+
+    Example: ptctools volume rm volume_a
+    """
+    access_token = os.environ.get("PORTAINER_ACCESS_TOKEN")
+    if not access_token:
+        click.echo("Error: Missing PORTAINER_ACCESS_TOKEN", err=True)
+        sys.exit(1)
+
+    portainer_url = url.rstrip("/")
+
+    if not yes:
+        if not click.confirm(f"Are you sure you want to delete volume '{volume}'?"):
+            click.echo("Aborted.")
+            sys.exit(0)
+
+    click.echo(f"Removing volume: {volume}...")
+
+    success = delete_volume(
+        portainer_url,
+        access_token,
+        endpoint_id,
+        volume,
+        force,
+    )
+
+    if success:
+        click.echo(f"  ✓ Volume '{volume}' removed")
+    else:
+        click.echo(f"  ✗ Failed to remove volume '{volume}'", err=True)
+
+    sys.exit(0 if success else 1)
+
+
+@cli.command()
+@click.option("--url", "-u", required=True, help="Portainer base URL")
+@click.argument("old_name")
+@click.argument("new_name")
+@click.option("--endpoint-id", "-e", type=int, default=1, help="Portainer endpoint ID")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt")
+def rename(
+    url: str,
+    old_name: str,
+    new_name: str,
+    endpoint_id: int,
+    yes: bool,
+):
+    """Rename a Docker volume (copy to new, delete old).
+
+    OLD_NAME is the current volume name.
+    NEW_NAME is the new volume name.
+
+    Example: ptctools volume rename volume_a volume_b
+    """
+    access_token = os.environ.get("PORTAINER_ACCESS_TOKEN")
+    if not access_token:
+        click.echo("Error: Missing PORTAINER_ACCESS_TOKEN", err=True)
+        sys.exit(1)
+
+    portainer_url = url.rstrip("/")
+
+    if not yes:
+        if not click.confirm(f"Rename '{old_name}' to '{new_name}'? This will copy data and delete the original."):
+            click.echo("Aborted.")
+            sys.exit(0)
+
+    click.echo(f"Renaming volume: {old_name} -> {new_name}")
+    click.echo()
+
+    # Step 1: Copy data to new volume
+    click.echo("Step 1: Copying data to new volume...")
+    if not copy_volume(portainer_url, access_token, endpoint_id, old_name, new_name):
+        click.echo("  ✗ Failed to copy data. Original volume unchanged.", err=True)
+        sys.exit(1)
+
+    # Step 2: Delete old volume
+    click.echo()
+    click.echo("Step 2: Removing old volume...")
+    if not delete_volume(portainer_url, access_token, endpoint_id, old_name, force=True):
+        click.echo(f"  ⚠ Warning: Failed to remove old volume '{old_name}'", err=True)
+        click.echo(f"    Data has been copied to '{new_name}'. Please remove '{old_name}' manually.")
+        sys.exit(1)
+
+    click.echo(f"  ✓ Volume '{old_name}' removed")
+    click.echo()
+    click.echo(f"=== Volume renamed: {old_name} -> {new_name} ===")
+    sys.exit(0)
 
 
 @cli.command()
