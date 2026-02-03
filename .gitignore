@@ -206,7 +206,4 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
-src/ptctools/portainer_client/*
-!src/ptctools/portainer_client/__init__.py
-
 .DS_Store

@@ -23,4 +23,3 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ptctools"]
-force-include = { "src/ptctools/portainer_client" = "ptctools/portainer_client" }
