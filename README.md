@@ -13,6 +13,13 @@ uv tool install git+https://github.com/tamntlib/ptctools.git
 uv tool install ptctools --from git+https://github.com/tamntlib/ptctools.git
 
 # From local path
+uv tool install openapi-generator-cli==7.19.0
+openapi-generator-cli generate \
+  -i portainer_openapi.yml \
+  -g python \
+  -o ./src/ptctools/portainer_client \
+  --skip-validate-spec \
+  --additional-properties=generateSourceCodeOnly=true
 uv tool install . --no-cache --reinstall
 ```
 

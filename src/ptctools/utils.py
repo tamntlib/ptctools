@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import subprocess
 import sys
+import traceback
 from pathlib import Path
 
 import click
+
+logger = logging.getLogger(__name__)
 
 from ptctools._s3 import (
     parse_s3_uri,
@@ -261,6 +265,8 @@ def backup(
             )
 
     if result.returncode != 0:
+        logger.error("Backup failed with exit code %d: stderr=%s stdout=%s",
+                     result.returncode, result.stderr, result.stdout)
         click.echo(f"✗ Backup failed with exit code {result.returncode}")
         if result.stderr:
             click.echo(f"Error: {result.stderr}")
@@ -403,6 +409,8 @@ def restore(
             )
 
     if result.returncode != 0:
+        logger.error("Restore failed with exit code %d: stderr=%s stdout=%s",
+                     result.returncode, result.stderr, result.stdout)
         click.echo(f"✗ Restore failed with exit code {result.returncode}")
         if result.stderr:
             click.echo(f"Error: {result.stderr}")

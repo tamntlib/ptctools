@@ -11,7 +11,7 @@ src/ptctools/
 ├── pyproject.toml          # Package config, entry point: ptctools.cli:main
 ├── README.md               # User documentation
 └── src/ptctools/
-    ├── __init__.py         # Version: 0.1.0
+    ├── __init__.py         # Version: 0.1.1
     ├── cli.py              # Main click CLI, registers subcommand groups
     ├── _portainer.py       # Shared Portainer API utilities (internal)
     ├── _s3.py              # Shared S3/URI parsing utilities (internal)

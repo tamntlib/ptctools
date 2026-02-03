@@ -2,92 +2,24 @@
 
 from __future__ import annotations
 
-import base64
 import json
+import logging
 import os
 import sys
+import traceback
 from pathlib import Path
 
 import click
+import docker.errors
 
-from ptctools._portainer import api_request
+from ptctools._portainer import get_portainer_docker_client, PortainerError
 
-
-def list_configs(
-    portainer_url: str,
-    api_key: str,
-    endpoint_id: int,
-) -> tuple[list | None, int]:
-    """List all Docker configs."""
-    url = f"{portainer_url}/api/endpoints/{endpoint_id}/docker/configs"
-    return api_request(url, api_key)
+logger = logging.getLogger(__name__)
 
 
-def get_config(
-    portainer_url: str,
-    api_key: str,
-    endpoint_id: int,
-    config_id: str,
-) -> tuple[dict | None, int]:
-    """Get a specific Docker config by ID."""
-    url = f"{portainer_url}/api/endpoints/{endpoint_id}/docker/configs/{config_id}"
-    return api_request(url, api_key)
-
-
-def create_config(
-    portainer_url: str,
-    api_key: str,
-    endpoint_id: int,
-    name: str,
-    data: str,
-    labels: dict | None = None,
-) -> tuple[dict | None, int]:
-    """Create a new Docker config."""
-    url = f"{portainer_url}/api/endpoints/{endpoint_id}/docker/configs/create"
-
-    # Docker API requires base64 encoded data
-    encoded_data = base64.b64encode(data.encode("utf-8")).decode("utf-8")
-
-    payload = {
-        "Name": name,
-        "Data": encoded_data,
-    }
-
-    if labels:
-        payload["Labels"] = labels
-
-    return api_request(url, api_key, method="POST", data=payload)
-
-
-def delete_config(
-    portainer_url: str,
-    api_key: str,
-    endpoint_id: int,
-    config_id: str,
-) -> tuple[dict | None, int]:
-    """Delete a Docker config."""
-    url = f"{portainer_url}/api/endpoints/{endpoint_id}/docker/configs/{config_id}"
-    return api_request(url, api_key, method="DELETE")
-
-
-def find_config_by_name(
-    portainer_url: str,
-    api_key: str,
-    endpoint_id: int,
-    name: str,
-) -> dict | None:
-    """Find a config by name and return its details."""
-    configs, status_code = list_configs(portainer_url, api_key, endpoint_id)
-
-    if status_code != 200 or not isinstance(configs, list):
-        return None
-
-    for config in configs:
-        spec = config.get("Spec", {})
-        if spec.get("Name") == name:
-            return config
-
-    return None
+class ConfigError(PortainerError):
+    """Exception for Docker config operations."""
+    pass
 
 
 @click.group()
@@ -154,44 +86,35 @@ def set_config(
 
     portainer_url = url.rstrip("/")
 
-    # Check if config already exists
-    existing = find_config_by_name(portainer_url, access_token, endpoint_id, name)
+    try:
+        client = get_portainer_docker_client(portainer_url, access_token, endpoint_id)
+        
+        # Check if config already exists
+        existing = None
+        for config in client.configs.list():
+            if config.name == name:
+                existing = config
+                break
 
-    if existing:
-        if not force:
-            click.echo(
-                f"Error: Config '{name}' already exists. Use --force to replace.",
-                err=True,
-            )
-            sys.exit(1)
+        if existing:
+            if not force:
+                click.echo(
+                    f"Error: Config '{name}' already exists. Use --force to replace.",
+                    err=True,
+                )
+                sys.exit(1)
 
-        # Delete existing config first (Docker doesn't support updating configs)
-        # Docker Swarm configs are immutable - no update API exists.
-        # The only way to change a config is to delete and recreate it.
-        click.echo(f"Removing existing config: {name}")
-        config_id = existing.get("ID")
-        _, status_code = delete_config(
-            portainer_url, access_token, endpoint_id, config_id
-        )
-        if status_code not in (200, 204):
-            click.echo(
-                f"Error: Failed to delete existing config (HTTP {status_code})",
-                err=True,
-            )
-            sys.exit(1)
+            # Delete existing config first (Docker doesn't support updating configs)
+            click.echo(f"Removing existing config: {name}")
+            existing.remove()
 
-    click.echo(f"Creating config: {name}")
-    response, status_code = create_config(
-        portainer_url, access_token, endpoint_id, name, data
-    )
+        click.echo(f"Creating config: {name}")
+        new_config = client.configs.create(name=name, data=data.encode("utf-8"))
+        click.echo(f"✓ Config '{name}' created successfully (ID: {new_config.id})")
 
-    if 200 <= status_code < 300:
-        config_id = response.get("ID") if response else "unknown"
-        click.echo(f"✓ Config '{name}' created successfully (ID: {config_id})")
-    else:
-        click.echo(f"Error: Failed to create config (HTTP {status_code})", err=True)
-        if response:
-            click.echo(json.dumps(response, indent=2), err=True)
+    except docker.errors.APIError as e:
+        logger.error("Config operation failed: %s\n%s", e, traceback.format_exc())
+        click.echo(f"Error: {e}", err=True)
         sys.exit(1)
 
 
@@ -213,12 +136,24 @@ def get_config_cmd(url: str, name: str, endpoint_id: int):
 
     portainer_url = url.rstrip("/")
 
-    config = find_config_by_name(portainer_url, access_token, endpoint_id, name)
+    try:
+        client = get_portainer_docker_client(portainer_url, access_token, endpoint_id)
+        
+        config = None
+        for c in client.configs.list():
+            if c.name == name:
+                config = c
+                break
 
-    if config:
-        click.echo(json.dumps(config, indent=2))
-    else:
-        click.echo(f"Error: Config '{name}' not found", err=True)
+        if config:
+            click.echo(json.dumps(config.attrs, indent=2))
+        else:
+            click.echo(f"Error: Config '{name}' not found", err=True)
+            sys.exit(1)
+
+    except docker.errors.APIError as e:
+        logger.error("Config operation failed: %s\n%s", e, traceback.format_exc())
+        click.echo(f"Error: {e}", err=True)
         sys.exit(1)
 
 
@@ -236,12 +171,12 @@ def list_configs_cmd(url: str, endpoint_id: int):
 
     portainer_url = url.rstrip("/")
 
-    configs, status_code = list_configs(portainer_url, access_token, endpoint_id)
-
-    if status_code != 200:
-        click.echo(f"Error: Failed to list configs (HTTP {status_code})", err=True)
-        if configs:
-            click.echo(json.dumps(configs, indent=2), err=True)
+    try:
+        client = get_portainer_docker_client(portainer_url, access_token, endpoint_id)
+        configs = client.configs.list()
+    except docker.errors.APIError as e:
+        logger.error("Config operation failed: %s\n%s", e, traceback.format_exc())
+        click.echo(f"Error: {e}", err=True)
         sys.exit(1)
 
     if not configs:
@@ -250,10 +185,9 @@ def list_configs_cmd(url: str, endpoint_id: int):
 
     click.echo(f"Found {len(configs)} config(s):\n")
     for config in configs:
-        spec = config.get("Spec", {})
-        config_id = config.get("ID", "unknown")
-        config_name = spec.get("Name", "unknown")
-        created = config.get("CreatedAt", "unknown")
+        config_id = config.id
+        config_name = config.name
+        created = config.attrs.get("CreatedAt", "unknown")
         click.echo(f"  {config_name}")
         click.echo(f"    ID: {config_id}")
         click.echo(f"    Created: {created}")
@@ -275,19 +209,24 @@ def delete_config_cmd(url: str, name: str, endpoint_id: int):
 
     portainer_url = url.rstrip("/")
 
-    config = find_config_by_name(portainer_url, access_token, endpoint_id, name)
+    try:
+        client = get_portainer_docker_client(portainer_url, access_token, endpoint_id)
+        
+        config = None
+        for c in client.configs.list():
+            if c.name == name:
+                config = c
+                break
 
-    if not config:
-        click.echo(f"Error: Config '{name}' not found", err=True)
-        sys.exit(1)
+        if not config:
+            click.echo(f"Error: Config '{name}' not found", err=True)
+            sys.exit(1)
 
-    config_id = config.get("ID")
-    click.echo(f"Deleting config: {name} (ID: {config_id})")
-
-    _, status_code = delete_config(portainer_url, access_token, endpoint_id, config_id)
-
-    if status_code in (200, 204):
+        click.echo(f"Deleting config: {name} (ID: {config.id})")
+        config.remove()
         click.echo(f"✓ Config '{name}' deleted successfully")
-    else:
-        click.echo(f"Error: Failed to delete config (HTTP {status_code})", err=True)
+
+    except docker.errors.APIError as e:
+        logger.error("Config operation failed: %s\n%s", e, traceback.format_exc())
+        click.echo(f"Error: Failed to delete config: {e}", err=True)
         sys.exit(1)
