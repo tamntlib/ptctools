@@ -10,7 +10,11 @@ import traceback
 import click
 import docker
 
-from ptctools._portainer import get_portainer_docker_client, run_container, PortainerError
+from ptctools._portainer import (
+    get_portainer_docker_client,
+    run_container,
+    PortainerError,
+)
 from ptctools._s3 import parse_s3_uri, is_s3_uri, get_s3_endpoint, get_s3_credentials
 
 logger = logging.getLogger(__name__)
@@ -18,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 class DatabaseError(PortainerError):
     """Exception for database operations."""
+
     pass
 
 
@@ -42,7 +47,7 @@ def run_mc_command(
     """Run minio/mc command in ephemeral container.
 
     The volume is mounted at /data in the container.
-    
+
     Raises:
         DatabaseError: If Docker operation fails
     """
@@ -54,7 +59,7 @@ def run_mc_command(
 
     try:
         client = get_portainer_docker_client(portainer_url, access_token, endpoint_id)
-        
+
         return run_container(
             client=client,
             image="minio/mc:latest",
@@ -82,7 +87,7 @@ def backup_database(
     s3_secret_key: str | None,
 ) -> None:
     """Backup database using pg_dump via exec, then optionally upload to S3 with mc.
-    
+
     Raises:
         DatabaseError: If backup fails
     """
@@ -101,13 +106,15 @@ def backup_database(
     # Step 1: Run pg_dump inside the database container
     click.echo("  Running pg_dump...")
     cmd = f"pg_dump -U {db_user} {db_name} | gzip > {backup_file} && stat -c %s {backup_file}"
-    
+
     try:
         exit_code, output_stream = container.exec_run(
             ["sh", "-c", cmd],
             demux=False,
         )
-        output_text = output_stream.decode("utf-8", errors="replace") if output_stream else ""
+        output_text = (
+            output_stream.decode("utf-8", errors="replace") if output_stream else ""
+        )
     except docker.errors.APIError as e:
         click.echo(f"  ✗ pg_dump failed: {e}")
         raise DatabaseError(f"pg_dump failed: {e}") from e
@@ -142,7 +149,9 @@ def backup_database(
 
         if not s3_access_key or not s3_secret_key:
             click.echo("  ✗ S3 credentials required (S3_ACCESS_KEY, S3_SECRET_KEY)")
-            raise DatabaseError("S3 credentials required (S3_ACCESS_KEY, S3_SECRET_KEY)")
+            raise DatabaseError(
+                "S3 credentials required (S3_ACCESS_KEY, S3_SECRET_KEY)"
+            )
 
         click.echo(f"  Uploading to S3: s3://{bucket}/{s3_path}...")
 
@@ -179,14 +188,18 @@ def backup_database(
                 ["sh", "-c", f"base64 {backup_file}"],
                 demux=False,
             )
-            b64_content = b64_output.decode("utf-8", errors="replace") if b64_output else ""
+            b64_content = (
+                b64_output.decode("utf-8", errors="replace") if b64_output else ""
+            )
         except docker.errors.APIError as e:
             click.echo("  ✗ Failed to read backup file from container")
             raise DatabaseError("Failed to read backup file from container") from e
 
         if read_exit_code != 0:
             click.echo(f"  ✗ Failed to read backup file: exit code {read_exit_code}")
-            raise DatabaseError(f"Failed to read backup file: exit code {read_exit_code}")
+            raise DatabaseError(
+                f"Failed to read backup file: exit code {read_exit_code}"
+            )
 
         # Decode and save to output file
         import base64
@@ -227,7 +240,7 @@ def restore_database(
     s3_secret_key: str | None,
 ) -> None:
     """Restore database from local file or S3.
-    
+
     Raises:
         DatabaseError: If restore fails
     """
@@ -260,7 +273,9 @@ def restore_database(
 
         if not s3_access_key or not s3_secret_key:
             click.echo("  ✗ S3 credentials required (S3_ACCESS_KEY, S3_SECRET_KEY)")
-            raise DatabaseError("S3 credentials required (S3_ACCESS_KEY, S3_SECRET_KEY)")
+            raise DatabaseError(
+                "S3 credentials required (S3_ACCESS_KEY, S3_SECRET_KEY)"
+            )
 
         click.echo(f"  Downloading from S3: s3://{bucket}/{s3_path}...")
 
@@ -322,7 +337,9 @@ def restore_database(
 
         if write_exit_code != 0:
             click.echo(f"  ✗ Failed to write backup file: exit code {write_exit_code}")
-            raise DatabaseError(f"Failed to write backup file: exit code {write_exit_code}")
+            raise DatabaseError(
+                f"Failed to write backup file: exit code {write_exit_code}"
+            )
 
         # Append remaining chunks
         for chunk in chunks[1:]:
@@ -350,7 +367,9 @@ def restore_database(
             ["sh", "-c", psql_cmd],
             demux=False,
         )
-        output = output_stream.decode("utf-8", errors="replace") if output_stream else ""
+        output = (
+            output_stream.decode("utf-8", errors="replace") if output_stream else ""
+        )
     except docker.errors.APIError as e:
         click.echo(f"  ✗ Restore failed: {e}")
         raise DatabaseError(f"Restore failed: {e}") from e
@@ -381,7 +400,13 @@ def cli():
 
 
 @cli.command()
-@click.option("--url", "-u", required=True, help="Portainer base URL")
+@click.option(
+    "--url",
+    "-u",
+    envvar="PORTAINER_URL",
+    required=True,
+    help="Portainer base URL (or PORTAINER_URL env var)",
+)
 @click.option("--container-id", "-c", required=True, help="Database container ID")
 @click.option(
     "--volume-name", "-v", required=True, help="Volume name where database stores data"
@@ -417,9 +442,9 @@ def backup(
     """Backup PostgreSQL database to local file or S3.
 
     Examples:
-        ptctools db backup -u https://portainer.example.com -c abc123 -v db_data --db-user postgres --db-name mydb -o /tmp/backup.sql.gz
+        ptctools docker db backup -u https://portainer.example.com -c abc123 -v db_data --db-user postgres --db-name mydb -o /tmp/backup.sql.gz
 
-        ptctools db backup -u https://portainer.example.com -c abc123 -v db_data --db-user postgres --db-name mydb -o s3://mybucket/backups/backup.sql.gz --s3-endpoint https://s3.<region>.amazonaws.com
+        ptctools docker db backup -u https://portainer.example.com -c abc123 -v db_data --db-user postgres --db-name mydb -o s3://mybucket/backups/backup.sql.gz --s3-endpoint https://s3.<region>.amazonaws.com
     """
     access_token = os.environ.get("PORTAINER_ACCESS_TOKEN")
     if not access_token:
@@ -477,7 +502,13 @@ def backup(
 
 
 @cli.command()
-@click.option("--url", "-u", required=True, help="Portainer base URL")
+@click.option(
+    "--url",
+    "-u",
+    envvar="PORTAINER_URL",
+    required=True,
+    help="Portainer base URL (or PORTAINER_URL env var)",
+)
 @click.option("--container-id", "-c", required=True, help="Database container ID")
 @click.option(
     "--volume-name", "-v", required=True, help="Volume name where database stores data"
@@ -514,9 +545,9 @@ def restore(
     """Restore PostgreSQL database from local file or S3.
 
     Examples:
-        ptctools db restore -u https://portainer.example.com -c abc123 -v db_data --db-user postgres --db-name mydb -i /tmp/backup.sql.gz
+        ptctools docker db restore -u https://portainer.example.com -c abc123 -v db_data --db-user postgres --db-name mydb -i /tmp/backup.sql.gz
 
-        ptctools db restore -u https://portainer.example.com -c abc123 -v db_data --db-user postgres --db-name mydb -i s3://mybucket/backups/backup.sql.gz --s3-endpoint https://s3.<region>.amazonaws.com
+        ptctools docker db restore -u https://portainer.example.com -c abc123 -v db_data --db-user postgres --db-name mydb -i s3://mybucket/backups/backup.sql.gz --s3-endpoint https://s3.<region>.amazonaws.com
     """
     access_token = os.environ.get("PORTAINER_ACCESS_TOKEN")
     if not access_token:

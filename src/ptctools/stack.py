@@ -19,12 +19,24 @@ from ptctools._portainer import (
 )
 from ptctools.portainer_client.openapi_client.api.stacks_api import StacksApi
 from ptctools.portainer_client.openapi_client.api.users_api import UsersApi
-from ptctools.portainer_client.openapi_client.api.resource_controls_api import ResourceControlsApi
-from ptctools.portainer_client.openapi_client.models.stacks_swarm_stack_from_file_content_payload import StacksSwarmStackFromFileContentPayload
-from ptctools.portainer_client.openapi_client.models.stacks_update_swarm_stack_payload import StacksUpdateSwarmStackPayload
-from ptctools.portainer_client.openapi_client.models.resourcecontrols_resource_control_create_payload import ResourcecontrolsResourceControlCreatePayload
-from ptctools.portainer_client.openapi_client.models.resourcecontrols_resource_control_update_payload import ResourcecontrolsResourceControlUpdatePayload
-from ptctools.portainer_client.openapi_client.models.portainer_resource_control_type import PortainerResourceControlType
+from ptctools.portainer_client.openapi_client.api.resource_controls_api import (
+    ResourceControlsApi,
+)
+from ptctools.portainer_client.openapi_client.models.stacks_swarm_stack_from_file_content_payload import (
+    StacksSwarmStackFromFileContentPayload,
+)
+from ptctools.portainer_client.openapi_client.models.stacks_update_swarm_stack_payload import (
+    StacksUpdateSwarmStackPayload,
+)
+from ptctools.portainer_client.openapi_client.models.resourcecontrols_resource_control_create_payload import (
+    ResourcecontrolsResourceControlCreatePayload,
+)
+from ptctools.portainer_client.openapi_client.models.resourcecontrols_resource_control_update_payload import (
+    ResourcecontrolsResourceControlUpdatePayload,
+)
+from ptctools.portainer_client.openapi_client.models.portainer_resource_control_type import (
+    PortainerResourceControlType,
+)
 from ptctools.portainer_client.openapi_client.exceptions import ApiException
 
 logger = logging.getLogger(__name__)
@@ -32,6 +44,7 @@ logger = logging.getLogger(__name__)
 
 class StackError(PortainerError):
     """Exception for stack operations."""
+
     pass
 
 
@@ -63,7 +76,13 @@ def cli():
 
 
 @cli.command()
-@click.option("--url", "-u", required=True, help="Portainer base URL")
+@click.option(
+    "--url",
+    "-u",
+    envvar="PORTAINER_URL",
+    required=True,
+    help="Portainer base URL (or PORTAINER_URL env var)",
+)
 @click.option("--stack-name", "-n", required=True, help="Stack name")
 @click.option(
     "--stack-file",
@@ -113,11 +132,15 @@ def deploy(
                 user_teams = []
                 for m in memberships:
                     if m.team_id:
-                        user_teams.append({"Id": m.team_id, "Name": f"Team {m.team_id}"})
-                
+                        user_teams.append(
+                            {"Id": m.team_id, "Name": f"Team {m.team_id}"}
+                        )
+
                 if user_teams:
                     team_id = user_teams[0]["Id"]
-                    click.echo(f"Auto-detected team: {user_teams[0]['Name']} (ID: {team_id})")
+                    click.echo(
+                        f"Auto-detected team: {user_teams[0]['Name']} (ID: {team_id})"
+                    )
                 else:
                     click.echo(
                         "Error: ownership=team but no team found and --team-id not specified",
@@ -160,7 +183,9 @@ def deploy(
 
             if existing_stack_id is not None:
                 # Update existing stack
-                click.echo(f"Updating existing stack: {stack_name} (ID: {existing_stack_id})...")
+                click.echo(
+                    f"Updating existing stack: {stack_name} (ID: {existing_stack_id})..."
+                )
                 payload = StacksUpdateSwarmStackPayload(
                     stack_file_content=stack_content,
                     env=env_vars,
@@ -168,14 +193,18 @@ def deploy(
                     pull_image=True,
                 )
                 response = stacks_api.stack_update(
-                    id=existing_stack_id, endpoint_id=endpoint_id, body=payload.to_dict()
+                    id=existing_stack_id,
+                    endpoint_id=endpoint_id,
+                    body=payload.to_dict(),
                 )
                 click.echo("Stack updated successfully!")
                 click.echo(json.dumps(response.to_dict(), indent=2))
             else:
                 # Create new stack - need swarm ID first
                 click.echo("Getting swarm ID...")
-                docker_client = get_portainer_docker_client(portainer_url, access_token, endpoint_id)
+                docker_client = get_portainer_docker_client(
+                    portainer_url, access_token, endpoint_id
+                )
                 swarm_info = docker_client.swarm.attrs
                 swarm_id = swarm_info.get("ID") if swarm_info else None
                 if not swarm_id:
@@ -198,7 +227,7 @@ def deploy(
             # Apply access control
             if ownership:
                 click.echo()
-                
+
                 # Get final stack ID
                 final_stack_id = None
                 stacks = stacks_api.stack_list()
@@ -221,7 +250,9 @@ def deploy(
                                 teams=[],
                                 users=[user_id],
                             )
-                            rc_api.resource_control_update(id=rc.id, body=rc_payload.to_dict())
+                            rc_api.resource_control_update(
+                                id=rc.id, body=rc_payload.to_dict()
+                            )
                             click.echo("✓ Access control set to private")
 
                     elif ownership == "team" and team_id:
@@ -232,7 +263,9 @@ def deploy(
                                 teams=[team_id],
                                 users=[],
                             )
-                            rc_api.resource_control_update(id=rc.id, body=rc_payload.to_dict())
+                            rc_api.resource_control_update(
+                                id=rc.id, body=rc_payload.to_dict()
+                            )
                             click.echo(f"✓ Access control set to team {team_id}")
                         else:
                             rc_payload = ResourcecontrolsResourceControlCreatePayload(
@@ -253,7 +286,9 @@ def deploy(
                                 teams=[],
                                 users=[],
                             )
-                            rc_api.resource_control_update(id=rc.id, body=rc_payload.to_dict())
+                            rc_api.resource_control_update(
+                                id=rc.id, body=rc_payload.to_dict()
+                            )
                             click.echo("✓ Access control set to public")
                         else:
                             rc_payload = ResourcecontrolsResourceControlCreatePayload(
@@ -272,7 +307,9 @@ def deploy(
 
     except ApiException as e:
         error_msg = str(e.body) if e.body else str(e.reason)
-        logger.error("Stack operation failed: %s\n%s", error_msg, traceback.format_exc())
+        logger.error(
+            "Stack operation failed: %s\n%s", error_msg, traceback.format_exc()
+        )
         click.echo(f"Error: {error_msg}", err=True)
         click.echo()
         click.echo("Failed!")

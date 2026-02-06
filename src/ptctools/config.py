@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 class ConfigError(PortainerError):
     """Exception for Docker config operations."""
+
     pass
 
 
@@ -29,7 +30,13 @@ def cli():
 
 
 @cli.command("set")
-@click.option("--url", "-u", required=True, help="Portainer base URL")
+@click.option(
+    "--url",
+    "-u",
+    envvar="PORTAINER_URL",
+    required=True,
+    help="Portainer base URL (or PORTAINER_URL env var)",
+)
 @click.option("--name", "-n", required=True, help="Config name")
 @click.option("--data", "-d", default=None, help="Config data (string content)")
 @click.option(
@@ -41,9 +48,7 @@ def cli():
     help="Read config data from file",
 )
 @click.option("--endpoint-id", "-e", type=int, default=1, help="Portainer endpoint ID")
-@click.option(
-    "--force", is_flag=True, help="Replace existing config if it exists"
-)
+@click.option("--force", is_flag=True, help="Replace existing config if it exists")
 def set_config(
     url: str,
     name: str,
@@ -57,13 +62,13 @@ def set_config(
     Examples:
 
         # Create from inline data
-        ptctools config set -u https://portainer.example.com -n my-config -d "config content"
+        ptctools docker config set -u https://portainer.example.com -n my-config -d "config content"
 
         # Create from file
-        ptctools config set -u https://portainer.example.com -n nginx.conf -f ./nginx.conf
+        ptctools docker config set -u https://portainer.example.com -n nginx.conf -f ./nginx.conf
 
         # Replace existing config
-        ptctools config set -u https://portainer.example.com -n my-config -d "new content" --force
+        ptctools docker config set -u https://portainer.example.com -n my-config -d "new content" --force
     """
     # Validate that exactly one of --data or --file is provided
     if data is None and file_path is None:
@@ -88,7 +93,7 @@ def set_config(
 
     try:
         client = get_portainer_docker_client(portainer_url, access_token, endpoint_id)
-        
+
         # Check if config already exists
         existing = None
         for config in client.configs.list():
@@ -119,7 +124,13 @@ def set_config(
 
 
 @cli.command("get")
-@click.option("--url", "-u", required=True, help="Portainer base URL")
+@click.option(
+    "--url",
+    "-u",
+    envvar="PORTAINER_URL",
+    required=True,
+    help="Portainer base URL (or PORTAINER_URL env var)",
+)
 @click.option("--name", "-n", required=True, help="Config name")
 @click.option("--endpoint-id", "-e", type=int, default=1, help="Portainer endpoint ID")
 def get_config_cmd(url: str, name: str, endpoint_id: int):
@@ -138,7 +149,7 @@ def get_config_cmd(url: str, name: str, endpoint_id: int):
 
     try:
         client = get_portainer_docker_client(portainer_url, access_token, endpoint_id)
-        
+
         config = None
         for c in client.configs.list():
             if c.name == name:
@@ -158,7 +169,13 @@ def get_config_cmd(url: str, name: str, endpoint_id: int):
 
 
 @cli.command("list")
-@click.option("--url", "-u", required=True, help="Portainer base URL")
+@click.option(
+    "--url",
+    "-u",
+    envvar="PORTAINER_URL",
+    required=True,
+    help="Portainer base URL (or PORTAINER_URL env var)",
+)
 @click.option("--endpoint-id", "-e", type=int, default=1, help="Portainer endpoint ID")
 def list_configs_cmd(url: str, endpoint_id: int):
     """List all Docker Swarm configs."""
@@ -195,7 +212,13 @@ def list_configs_cmd(url: str, endpoint_id: int):
 
 
 @cli.command("delete")
-@click.option("--url", "-u", required=True, help="Portainer base URL")
+@click.option(
+    "--url",
+    "-u",
+    envvar="PORTAINER_URL",
+    required=True,
+    help="Portainer base URL (or PORTAINER_URL env var)",
+)
 @click.option("--name", "-n", required=True, help="Config name")
 @click.option("--endpoint-id", "-e", type=int, default=1, help="Portainer endpoint ID")
 def delete_config_cmd(url: str, name: str, endpoint_id: int):
@@ -211,7 +234,7 @@ def delete_config_cmd(url: str, name: str, endpoint_id: int):
 
     try:
         client = get_portainer_docker_client(portainer_url, access_token, endpoint_id)
-        
+
         config = None
         for c in client.configs.list():
             if c.name == name:

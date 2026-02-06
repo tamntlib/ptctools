@@ -3,11 +3,8 @@
 import click
 
 from ptctools import __version__
-from ptctools import stack
-from ptctools import volume
-from ptctools import db
+from ptctools import docker
 from ptctools import utils
-from ptctools import config
 
 
 @click.group()
@@ -17,11 +14,11 @@ def main():
     pass
 
 
-main.add_command(stack.cli, name="stack")
-main.add_command(volume.cli, name="volume")
-main.add_command(db.cli, name="db")
+# Docker commands (via Portainer Docker proxy)
+main.add_command(docker.cli, name="docker")
+
+# Local utility commands (no Portainer needed)
 main.add_command(utils.cli, name="utils")
-main.add_command(config.cli, name="config")
 
 
 if __name__ == "__main__":

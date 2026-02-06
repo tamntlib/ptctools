@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 
 class VolumeError(PortainerError):
     """Exception for volume operations."""
+
     pass
 
 
@@ -47,7 +48,7 @@ def backup_volume(
     passphrase: str,
 ) -> None:
     """Backup a single volume to S3 using Duplicati CLI.
-    
+
     Raises:
         VolumeError: If backup fails
     """
@@ -56,26 +57,30 @@ def backup_volume(
     click.echo(f"Backing up {volume_name} using Duplicati...")
 
     # Common options for both repair and backup
-    common_opts = " ".join([
-        f"--aws-access-key-id={s3_access_key}",
-        f"--aws-secret-access-key={s3_secret_key}",
-        f"--passphrase={passphrase}" if passphrase else "--no-encryption",
-        "--dbpath=/tmp/duplicati.sqlite",
-    ])
+    common_opts = " ".join(
+        [
+            f"--aws-access-key-id={s3_access_key}",
+            f"--aws-secret-access-key={s3_secret_key}",
+            f"--passphrase={passphrase}" if passphrase else "--no-encryption",
+            "--dbpath=/tmp/duplicati.sqlite",
+        ]
+    )
 
     # Repair command to rebuild local database from remote
     repair_cmd = f"duplicati-cli repair '{s3_dest}' {common_opts}"
 
     # Backup command
-    backup_cmd = " ".join([
-        "duplicati-cli",
-        "backup",
-        f"'{s3_dest}'",
-        "/data",
-        common_opts,
-        f"--keep-versions={keep_versions}",
-        "--retention-policy=",
-    ])
+    backup_cmd = " ".join(
+        [
+            "duplicati-cli",
+            "backup",
+            f"'{s3_dest}'",
+            "/data",
+            common_opts,
+            f"--keep-versions={keep_versions}",
+            "--retention-policy=",
+        ]
+    )
 
     # Run repair first (rebuilds local DB from remote), then backup
     # Use ; instead of && because repair may return non-zero for warnings
@@ -83,10 +88,10 @@ def backup_volume(
 
     try:
         client = get_portainer_docker_client(portainer_url, api_key, endpoint_id)
-        
+
         # Pull image
         # check if image unused then remove image handled by run_container
-        
+
         # Run container
         exit_code, logs = run_container(
             client=client,
@@ -134,10 +139,10 @@ def restore_volume(
     restore_time: str | None,
 ) -> None:
     """Restore a single volume from S3 using Duplicati CLI.
-    
+
     Args:
         s3_path: S3 path to restore from (used directly, no modification).
-    
+
     Raises:
         VolumeError: If restore fails
     """
@@ -167,7 +172,7 @@ def restore_volume(
 
     try:
         client = get_portainer_docker_client(portainer_url, api_key, endpoint_id)
-        
+
         # Run container
         exit_code, logs = run_container(
             client=client,
@@ -181,7 +186,9 @@ def restore_volume(
         raise VolumeError(f"Restore failed: {e}") from e
 
     # Success if exit_code == 0, or exit_code == 2 with no files needing restore (already up-to-date)
-    already_up_to_date = exit_code == 2 and logs and "0 files need to be restored" in logs
+    already_up_to_date = (
+        exit_code == 2 and logs and "0 files need to be restored" in logs
+    )
     if exit_code != 0 and not already_up_to_date:
         click.echo(f"  ✗ Restore failed with exit code {exit_code}")
         if logs:
@@ -204,7 +211,13 @@ def cli():
 
 
 @cli.command()
-@click.option("--url", "-u", required=True, help="Portainer base URL")
+@click.option(
+    "--url",
+    "-u",
+    envvar="PORTAINER_URL",
+    required=True,
+    help="Portainer base URL (or PORTAINER_URL env var)",
+)
 @click.option(
     "--volumes", "-v", required=True, help="Comma-separated list of volume names"
 )
@@ -216,9 +229,7 @@ def cli():
 )
 @click.option("--s3-endpoint", help="S3/MinIO endpoint URL (or S3_ENDPOINT env var)")
 @click.option("--endpoint-id", "-e", type=int, default=1, help="Portainer endpoint ID")
-@click.option(
-    "--keep-versions", type=int, default=7, help="Keep N versions of backups"
-)
+@click.option("--keep-versions", type=int, default=7, help="Keep N versions of backups")
 @click.option("--passphrase", type=str, default="", help="Encryption passphrase")
 def backup(
     url: str,
@@ -279,7 +290,9 @@ def backup(
             )
             success_count += 1
         except VolumeError as e:
-            logger.error("Volume backup failed for '%s': %s\n%s", vol, e, traceback.format_exc())
+            logger.error(
+                "Volume backup failed for '%s': %s\n%s", vol, e, traceback.format_exc()
+            )
         click.echo()
 
     click.echo("=== Volume backup complete ===")
@@ -297,11 +310,11 @@ def copy_volume(
     team_id: int | None = None,
 ) -> None:
     """Copy data from one volume to another.
-    
+
     Args:
         ownership: 'copy' (from source), 'private', 'team', or 'public'
         team_id: Required if ownership is 'team'
-    
+
     Raises:
         VolumeError: If copy fails
     """
@@ -309,7 +322,7 @@ def copy_volume(
 
     try:
         client = get_portainer_docker_client(portainer_url, api_key, endpoint_id)
-        
+
         # Get source volume info for driver/labels
         try:
             source_vol = client.volumes.get(source_volume)
@@ -317,7 +330,7 @@ def copy_volume(
         except docker.errors.NotFound:
             click.echo(f"  ✗ Source volume '{source_volume}' not found")
             raise VolumeError(f"Source volume '{source_volume}' not found")
-        
+
         # Check if dest volume exists, create if not
         try:
             client.volumes.get(dest_volume)
@@ -326,11 +339,13 @@ def copy_volume(
             driver = source_info.get("Driver", "local")
             labels = source_info.get("Labels", {})
             try:
-                client.volumes.create(name=dest_volume, driver=driver, labels=labels or {})
+                client.volumes.create(
+                    name=dest_volume, driver=driver, labels=labels or {}
+                )
             except docker.errors.APIError as e:
                 click.echo(f"  ✗ Failed to create destination volume")
                 raise VolumeError(f"Failed to create destination volume: {e}") from e
-        
+
         # Copy data using busybox
         copy_cmd = "cp -a /source/. /dest/"
         exit_code, logs = run_container(
@@ -366,7 +381,9 @@ def copy_volume(
             if action == "copied":
                 click.echo(f"  ✓ Permissions copied from source")
             elif action == "skipped":
-                click.echo(f"  ✓ Permissions preserved (destination already has permissions)")
+                click.echo(
+                    f"  ✓ Permissions preserved (destination already has permissions)"
+                )
         except ResourceControlError as e:
             click.echo(f"  ⚠ Warning: Failed to copy permissions - {e}")
     else:
@@ -392,7 +409,7 @@ def copy_s3_to_volume(
     s3_secret_key: str,
 ) -> None:
     """Copy files from S3 to a volume using mc (MinIO Client).
-    
+
     Raises:
         VolumeError: If copy fails
     """
@@ -400,7 +417,7 @@ def copy_s3_to_volume(
 
     try:
         client = get_portainer_docker_client(portainer_url, api_key, endpoint_id)
-        
+
         # Create destination volume if it doesn't exist
         try:
             client.volumes.get(volume_name)
@@ -414,10 +431,12 @@ def copy_s3_to_volume(
 
         # Build mc commands: configure alias and copy
         s3_source = f"s3/{s3_bucket}/{s3_path}" if s3_path else f"s3/{s3_bucket}"
-        mc_cmd = " && ".join([
-            f"mc alias set s3 {s3_endpoint} {s3_access_key} {s3_secret_key}",
-            f"mc cp --recursive {s3_source}/ /data/",
-        ])
+        mc_cmd = " && ".join(
+            [
+                f"mc alias set s3 {s3_endpoint} {s3_access_key} {s3_secret_key}",
+                f"mc cp --recursive {s3_source}/ /data/",
+            ]
+        )
 
         exit_code, logs = run_container(
             client=client,
@@ -452,7 +471,7 @@ def copy_volume_to_s3(
     s3_secret_key: str,
 ) -> None:
     """Copy files from a volume to S3 using mc (MinIO Client).
-    
+
     Raises:
         VolumeError: If copy fails
     """
@@ -460,13 +479,15 @@ def copy_volume_to_s3(
 
     try:
         client = get_portainer_docker_client(portainer_url, api_key, endpoint_id)
-        
+
         # Build mc commands: configure alias and copy
         s3_dest = f"s3/{s3_bucket}/{s3_path}" if s3_path else f"s3/{s3_bucket}"
-        mc_cmd = " && ".join([
-            f"mc alias set s3 {s3_endpoint} {s3_access_key} {s3_secret_key}",
-            f"mc cp --recursive /data/ {s3_dest}/",
-        ])
+        mc_cmd = " && ".join(
+            [
+                f"mc alias set s3 {s3_endpoint} {s3_access_key} {s3_secret_key}",
+                f"mc cp --recursive /data/ {s3_dest}/",
+            ]
+        )
 
         exit_code, logs = run_container(
             client=client,
@@ -490,7 +511,13 @@ def copy_volume_to_s3(
 
 
 @cli.command()
-@click.option("--url", "-u", required=True, help="Portainer base URL")
+@click.option(
+    "--url",
+    "-u",
+    envvar="PORTAINER_URL",
+    required=True,
+    help="Portainer base URL (or PORTAINER_URL env var)",
+)
 @click.argument("source")
 @click.argument("dest")
 @click.option("--endpoint-id", "-e", type=int, default=1, help="Portainer endpoint ID")
@@ -516,13 +543,18 @@ def cp(
     SOURCE and DEST can be volume names or S3 URIs.
 
     Examples:
-        ptctools volume cp source dest
-        ptctools volume cp source dest --ownership team
-        ptctools volume cp source dest --ownership private
-        ptctools volume cp s3://bucket/path volume_a
-        ptctools volume cp volume_a s3://bucket/path
+        ptctools docker volume cp source dest
+        ptctools docker volume cp source dest --ownership team
+        ptctools docker volume cp source dest --ownership private
+        ptctools docker volume cp s3://bucket/path volume_a
+        ptctools docker volume cp volume_a s3://bucket/path
     """
-    from ptctools._s3 import is_s3_uri, parse_s3_uri, get_s3_endpoint, get_s3_credentials
+    from ptctools._s3 import (
+        is_s3_uri,
+        parse_s3_uri,
+        get_s3_endpoint,
+        get_s3_credentials,
+    )
 
     access_token = os.environ.get("PORTAINER_ACCESS_TOKEN")
     if not access_token:
@@ -535,7 +567,10 @@ def cp(
 
     # Both are S3 - not supported
     if source_is_s3 and dest_is_s3:
-        click.echo("Error: Cannot copy directly between S3 locations. Use volume as intermediate.", err=True)
+        click.echo(
+            "Error: Cannot copy directly between S3 locations. Use volume as intermediate.",
+            err=True,
+        )
         sys.exit(1)
 
     # Volume to Volume copy
@@ -654,7 +689,13 @@ def cp(
 
 
 @cli.command()
-@click.option("--url", "-u", required=True, help="Portainer base URL")
+@click.option(
+    "--url",
+    "-u",
+    envvar="PORTAINER_URL",
+    required=True,
+    help="Portainer base URL (or PORTAINER_URL env var)",
+)
 @click.argument("volume")
 @click.option("--endpoint-id", "-e", type=int, default=1, help="Portainer endpoint ID")
 @click.option("--force", "-f", is_flag=True, help="Force removal even if in use")
@@ -670,7 +711,7 @@ def rm(
 
     VOLUME is the volume name to remove.
 
-    Example: ptctools volume rm volume_a
+    Example: ptctools docker volume rm volume_a
     """
     access_token = os.environ.get("PORTAINER_ACCESS_TOKEN")
     if not access_token:
@@ -702,7 +743,13 @@ def rm(
 
 
 @cli.command()
-@click.option("--url", "-u", required=True, help="Portainer base URL")
+@click.option(
+    "--url",
+    "-u",
+    envvar="PORTAINER_URL",
+    required=True,
+    help="Portainer base URL (or PORTAINER_URL env var)",
+)
 @click.argument("old_name")
 @click.argument("new_name")
 @click.option("--endpoint-id", "-e", type=int, default=1, help="Portainer endpoint ID")
@@ -719,7 +766,7 @@ def rename(
     OLD_NAME is the current volume name.
     NEW_NAME is the new volume name.
 
-    Example: ptctools volume rename volume_a volume_b
+    Example: ptctools docker volume rename volume_a volume_b
     """
     access_token = os.environ.get("PORTAINER_ACCESS_TOKEN")
     if not access_token:
@@ -729,7 +776,9 @@ def rename(
     portainer_url = url.rstrip("/")
 
     if not yes:
-        if not click.confirm(f"Rename '{old_name}' to '{new_name}'? This will copy data and delete the original."):
+        if not click.confirm(
+            f"Rename '{old_name}' to '{new_name}'? This will copy data and delete the original."
+        ):
             click.echo("Aborted.")
             sys.exit(0)
 
@@ -741,7 +790,9 @@ def rename(
     try:
         copy_volume(portainer_url, access_token, endpoint_id, old_name, new_name)
     except VolumeError as e:
-        logger.error("Volume rename failed during copy: %s\n%s", e, traceback.format_exc())
+        logger.error(
+            "Volume rename failed during copy: %s\n%s", e, traceback.format_exc()
+        )
         click.echo("  ✗ Failed to copy data. Original volume unchanged.", err=True)
         sys.exit(1)
 
@@ -756,9 +807,13 @@ def rename(
     except docker.errors.NotFound:
         click.echo(f"  ✓ Volume '{old_name}' removed")  # Already deleted
     except docker.errors.APIError as e:
-        logger.error("Volume rename failed during delete: %s\n%s", e, traceback.format_exc())
+        logger.error(
+            "Volume rename failed during delete: %s\n%s", e, traceback.format_exc()
+        )
         click.echo(f"  ⚠ Warning: Failed to remove old volume '{old_name}'", err=True)
-        click.echo(f"    Data has been copied to '{new_name}'. Please remove '{old_name}' manually.")
+        click.echo(
+            f"    Data has been copied to '{new_name}'. Please remove '{old_name}' manually."
+        )
         sys.exit(1)
 
     click.echo()
@@ -767,7 +822,13 @@ def rename(
 
 
 @cli.command()
-@click.option("--url", "-u", required=True, help="Portainer base URL")
+@click.option(
+    "--url",
+    "-u",
+    envvar="PORTAINER_URL",
+    required=True,
+    help="Portainer base URL (or PORTAINER_URL env var)",
+)
 @click.option(
     "--volume",
     "-v",
@@ -830,7 +891,10 @@ def restore(
         # Use the first path segment as volume name
         volume_name = s3_path.split("/")[0]
     else:
-        click.echo("Error: No volume specified. Use --volume or include path in input URI", err=True)
+        click.echo(
+            "Error: No volume specified. Use --volume or include path in input URI",
+            err=True,
+        )
         sys.exit(1)
 
     passphrase = passphrase or os.environ.get("DUPLICATI_PASSPHRASE", "")
