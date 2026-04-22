@@ -88,6 +88,10 @@ ptctools docker db restore -c container_id -v db_data \
 ptctools docker db restore -c container_id -v db_data \
   --db-user postgres --db-name mydb -i s3://mybucket/backups/db.sql.gz
 
+# Clean up exited containers and unused images
+ptctools docker clean
+ptctools docker clean -y  # skip confirmation
+
 # Override PORTAINER_URL with -u flag
 ptctools docker secret create -u https://other.portainer.com -f dsn.txt my_secret
 
@@ -106,7 +110,8 @@ ptctools
 │   ├── secret create        # Create Docker secret (Swarm-only)
 │   ├── config set/get/list/delete  # Manage configs (Swarm-only)
 │   ├── volume backup/restore/cp/rm/rename
-│   └── db backup/restore
+│   ├── db backup/restore
+│   └── clean                # Remove exited containers & unused images
 ├── utils backup/restore     # Local Duplicati operations
 └── k8s ...                  # Kubernetes commands (future)
 ```
@@ -143,6 +148,9 @@ Rename a volume by copying data to a new volume and deleting the original.
 Backup/restore PostgreSQL database. Supports both local files and S3 URIs.
 - Uses `pg_dump`/`psql` for database operations
 - Uses `minio/mc` container for S3 transfers
+
+### `ptctools docker clean`
+Remove all exited containers and unused (dangling) images. Use `-y` to skip confirmation.
 
 ### `ptctools utils backup/restore`
 Local backup/restore operations using Duplicati CLI (docker or local). Does not require Portainer.

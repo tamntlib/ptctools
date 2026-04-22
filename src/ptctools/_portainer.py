@@ -119,9 +119,11 @@ def get_portainer_docker_client(
 def get_portainer_api_client(portainer_url: str, api_key: str) -> ApiClient:
     """Create a configured ApiClient for Portainer API."""
     config = Configuration(
-        host=f"{portainer_url.rstrip('/')}/api", api_key={"ApiKeyAuth": api_key}
+        host=f"{portainer_url.rstrip('/')}/api",
     )
-    return ApiClient(configuration=config)
+    client = ApiClient(configuration=config)
+    client.default_headers["X-API-Key"] = api_key
+    return client
 
 
 def set_volume_ownership(

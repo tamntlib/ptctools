@@ -48,6 +48,16 @@ class StackError(PortainerError):
     pass
 
 
+def _normalize_env_value(raw_value: str) -> str:
+    """Normalize a .env value by trimming whitespace and matching quotes."""
+    value = raw_value.strip()
+
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        return value[1:-1]
+
+    return value
+
+
 def load_stack_env_file(env_path: Path) -> list[dict]:
     """Parse .env file into Portainer environment variable format."""
     env_vars = []
@@ -64,7 +74,7 @@ def load_stack_env_file(env_path: Path) -> list[dict]:
                 name, value = line.split("=", 1)
                 name = name.strip()
                 if name:
-                    env_vars.append({"name": name, "value": value})
+                    env_vars.append({"name": name, "value": _normalize_env_value(value)})
 
     return env_vars
 

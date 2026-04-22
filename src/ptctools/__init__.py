@@ -1,6 +1,6 @@
 """Portainer Client Tools - CLI for managing Portainer stacks and backups."""
 
-__version__ = "0.1.1"
+__version__ = "0.2.1"
 
 import sys
 import os
